@@ -6,67 +6,72 @@
 ######################################################################################
 
 #region Construction
+[CmdletBinding(DefaultParameterSetName='passedHost')]
 Param
 (
-	[Parameter(Mandatory=$false)]
+ 	[Parameter(Mandatory=$true,position=0,ParameterSetName='passedHost')]
 	[ValidateNotNullOrEmpty()]
-    [String]
-    [alias("host")]
-	$hostInput,
+	[String[]]
+	[alias("host")]
+	[alias("hostInput")]
+	$Hostname,
 
-	[Parameter(Mandatory=$false)]
+	[Parameter(Mandatory=$true,ParameterSetName='HostFromFile')]
 	[ValidateNotNullOrEmpty()]
-    [String]
-    [alias("hosts")]
-	$hostsInput,
+	[String]
+	[alias("hosts")]
+	[alias("hostsInput")]
+    [ValidateScript({Test-Path $_})]
+	$Path,
 
-	[Parameter(Mandatory=$false)]
-	[ValidateNotNullOrEmpty()]
-    [Bool]
-    [alias("endpointdetails")]
-	$WriteEndpointDetails
+ 	[Parameter(Mandatory=$false,ParameterSetName='passedHost')]
+	[Parameter(Mandatory=$false,ParameterSetName='HostFromFile')]
+	[switch]
+	[alias("endpointdetails")]
+	$WriteEndpointDetails,
+
+ 	[Parameter(Mandatory=$false,ParameterSetName='passedHost')]
+	[Parameter(Mandatory=$false,ParameterSetName='HostFromFile')]
+	[switch]
+	$Raw
+
 )
 
-# Validating and loading inputs
-If (($hostInput) -or ($hostsInput))
-{
-    If ($hostsInput)
-    {
-        $Hosts = Get-Content ($PSScriptRoot.ToString() + "\Hosts.txt")
-    }
-    Else
-    {
-        $Hosts = @($hostInput)
-    }
-}
-Else
-{
-    Write-Host "ERROR: No values for host(s) were specified!`r`nSee README files for details on input parameters." -ForegroundColor Red
-    Exit
-}
+$ErrorActionPreference = "stop"
 
 # Variables
-$SSLLabsApiUrl = "https://api.dev.ssllabs.com/api/fa78d5a4/"
+$SSLLabsApiUrl = "https://api.ssllabs.com/api/v2/"
 
+switch ($PsCmdlet.ParameterSetName) {
+
+    'HostFromFile'
+    {
+        $Hosts = Get-Content -Path $Path
+        break;
+    }
+
+    'passedHost'
+    {
+        $Hosts = @($hostname) 
+        break;
+    }
+
+    default
+    {
+        # Should never get here
+        Throw "Invalid parameter"
+    }
+}
 
 $SSLLWrapperFilePath = $PSScriptRoot.ToString() + "\SSLLWrapper\SSLLWrapper.dll"
 $NewtonsoftJsonFilePath = $PSScriptRoot.ToString() + "\SSLLWrapper\NewtonSoft.Json.dll"
 
 # Loading DLLs
-Add-Type -Path $NewtonsoftJsonFilePath -ErrorAction Stop
-Add-Type -Path $SSLLWrapperFilePath -ErrorAction Stop
-
+Add-Type -Path $NewtonsoftJsonFilePath
+Add-Type -Path $SSLLWrapperFilePath
 
 # Creating SSLLService
 $SSLService = New-Object SSLLWrapper.SSLLService($SSLLabsApiUrl)
-
-#endregion
-
-#region Functions
-Function ToBooleanString($value)
-{
-    return [System.Convert]::ToBoolean($value).ToString()
-}
 
 #endregion
 
@@ -81,52 +86,72 @@ $ApiInfo = $SSLService.Info()
 If ($ApiInfo.Online -ne $true)
 {
     # Api is not online. Exiting.
-    Write-Host "Api " $SSLLabsApiUrl " is not online, contactable or is incorrect.`r`nExiting." -ForegroundColor Red
-    Exit
+    Write-Error "Api " $SSLLabsApiUrl " is not online, contactable or is incorrect.`r`nExiting."
+}
+
+if ($Raw) 
+{
+    $RawOutput = @()
 }
 
 
 Foreach ($myHost In $Hosts)
 {
+
     # Analysising host with a maximum of a 5 minute wait time
     #$HostAnalysis = $SSLService.AutomaticAnalyze($myHost, 500, 10)
-    $HostAnalysis = $SSLService.AutomaticAnalyze($myHost, [SSLLWrapper.SSLLService+Publish]::Off, [SSLLWrapper.SSLLService+ClearCache]::Ignore, [SSLLWrapper.SSLLService+FromCache]::On,[SSLLWrapper.SSLLService+All]::On,500,10)
 
     Write-Host "**********************************************************************************"
     Write-Host $myHost " - " (Get-Date -format "dd-MM-yyyy HH:mm:ss")
     Write-Host "**********************************************************************************"
-    Write-Host "Endpoints #           :" ($HostAnalysis.endpoints).Count
-    Write-Host "Analysis Error        :" $HostAnalysis.HasErrorOccurred
-    Write-Host "`n"
 
-    Foreach ($Endpoint In $HostAnalysis.endpoints)
+    $HostAnalysis = $SSLService.AutomaticAnalyze($myHost, [SSLLWrapper.SSLLService+Publish]::Off, [SSLLWrapper.SSLLService+ClearCache]::Ignore, [SSLLWrapper.SSLLService+FromCache]::On,[SSLLWrapper.SSLLService+All]::On,500,10)
+
+    if ($Raw) 
     {
-        Write-Host "Endpoint              :" $Endpoint.ipAddress
-
-        Write-Host "Grade                 :" $Endpoint.grade
-        Write-Host "Has Warnings          :" $Endpoint.hasWarnings
-
-        # Output extra details if EndpointDetails is true and analysis data is good (i.e check grade exists)
-        If (($WriteEndpointDetails) -and ($Endpoint.grade))
-        {
-            $EndpointAnalysis = $SSLService.GetEndpointData($HostAnalysis.host, $Endpoint.ipAddress)
-
-            Write-Host "Server Signature      :" $EndpointAnalysis.Details.serverSignature
-            Write-Host "Cert Chain Issue      :" $EndpointAnalysis.Details.chain.issues
-            Write-Host "Forward Secrecy       :" $EndpointAnalysis.Details.forwardSecrecy
-            Write-Host "Supports RC4          :" $EndpointAnalysis.Details.supportsRc4
-            Write-Host "Beast Vulnerable      :" $EndpointAnalysis.Details.vulnBeast
-            Write-Host "Heartbleed Vulnerable :" $EndpointAnalysis.Details.heartbleed
-            Write-Host "Poodle Vulnerable     :" $EndpointAnalysis.Details.poodleTls
-            
-       }
-       Write-Host "`n"
+        $RawOutput += $HostAnalysis
     }
-    Write-Host "`r`n"
+    else
+    {
+
+        Write-Host "Endpoints #           :" ($HostAnalysis.endpoints).Count
+
+        if ($HostAnalysis.HasErrorOccurred) 
+        {
+            Write-Host "Analysis Error        :" $hostAnalysis.Errors.message
+        }
+
+        Write-Host "`n"
+
+        Foreach ($Endpoint In $HostAnalysis.endpoints)
+        {
+            Write-Host "Endpoint              :" $Endpoint.ipAddress
+
+            Write-Host "Grade                 :" $Endpoint.grade
+            Write-Host "Has Warnings          :" $Endpoint.hasWarnings
+
+            # Output extra details if EndpointDetails is true and analysis data is good (i.e check grade exists)
+            If (($WriteEndpointDetails) -and ($Endpoint.grade))
+            {
+                $EndpointAnalysis = $SSLService.GetEndpointData($HostAnalysis.host, $Endpoint.ipAddress)
+
+                Write-Host "Server Signature      :" $EndpointAnalysis.Details.serverSignature
+                Write-Host "Cert Chain Issue      :" $EndpointAnalysis.Details.chain.issues
+                Write-Host "Forward Secrecy       :" $EndpointAnalysis.Details.forwardSecrecy
+                Write-Host "Supports RC4          :" $EndpointAnalysis.Details.supportsRc4
+                Write-Host "Beast Vulnerable      :" $EndpointAnalysis.Details.vulnBeast
+                Write-Host "Heartbleed Vulnerable :" $EndpointAnalysis.Details.heartbleed
+                Write-Host "Poodle Vulnerable     :" $EndpointAnalysis.Details.poodleTls
+            
+            }
+            Write-Host "`n"
+        }
+        Write-Host "`r`n"
+    }
+
 }
 
-
-
-
-
-
+if ($Raw) 
+{
+    $RawOutput
+}
