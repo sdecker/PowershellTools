@@ -132,90 +132,147 @@ Foreach ($myHost In $Hosts)
 
         Foreach ($Endpoint In $HostAnalysis.endpoints)
         {
-            Write-Host "Endpoint              :" $Endpoint.ipAddress
+            Write-Host "Endpoint                        :" $Endpoint.ipAddress
 
-            Write-Host "Grade                 :" $Endpoint.grade
-            Write-Host "Has Warnings          :" $Endpoint.hasWarnings
+            Write-Host "Grade                           :" $Endpoint.grade
+            Write-Host "Has Warnings                    :" $Endpoint.hasWarnings
 
             # Output extra details if EndpointDetails is true and analysis data is good (i.e check grade exists)
             If (($WriteEndpointDetails) -and ($Endpoint.grade))
             {
                 $EndpointAnalysis = $SSLService.GetEndpointData($HostAnalysis.host, $Endpoint.ipAddress)
 
-                Write-Host "Server Signature      :" $EndpointAnalysis.Details.serverSignature
-                Write-Host "Cert Chain Issue      :" $EndpointAnalysis.Details.chain.issues
-                Write-Host "Forward Secrecy       :" $EndpointAnalysis.Details.forwardSecrecy
-                Write-Host "Supports RC4          :" $EndpointAnalysis.Details.supportsRc4
-                Write-Host "Beast Vulnerable      :" $EndpointAnalysis.Details.vulnBeast
-                Write-Host "Heartbleed Vulnerable :" $EndpointAnalysis.Details.heartbleed
+                Write-Host "Server Signature                :" $EndpointAnalysis.Details.serverSignature
+
+				switch ($EndpointAnalysis.Details.chain.issues)
+				{
+                    #bit 0 (1) - unused
+                    1 { $chainIssues = "unused" }
+                    #bit 1 (2) - incomplete chain (set only when we were able to build a chain by adding missing intermediate certificates from external sources)
+                    2 { $chainIssues = "Incomplete " }
+                    #bit 2 (4) - chain contains unrelated or duplicate certificates (i.e., certificates that are not part of the same chain)
+                    4 { $chainIssues = "unrelated or duplicates" }
+                    #bit 3 (8) - the certificates form a chain (trusted or not), but the order is incorrect
+                    8 { $chainIssues = "Incorrect order" }
+                    #bit 4 (16) - contains a self-signed root certificate (not set for self-signed leafs)
+                    16 { $chainIssues = "self-signed root" }
+                    #bit 5 (32) - the certificates form a chain (if we added external certificates, bit 1 will be set), but we could not validate it. If the leaf was trusted, that means that we built a different chain we trusted.
+                    32 { $chainIssues = "Could not validate" }
+
+                    default { $chainIssues = "None" }
+				}
+                Write-Host "Cert Chain Issue                :" $chainIssues
+ 
+				switch ($EndpointAnalysis.Details.forwardSecrecy)
+				{
+                    # bit 0 (1) - set if at least one browser from our simulations negotiated a Forward Secrecy suite.
+					1 { $forwardSecrecy = "With some browsers"}
+                    # bit 1 (2) - set based on Simulator results if FS is achieved with modern clients. For example, the server supports ECDHE suites, but not DHE.
+					2 { $forwardSecrecy = "With modern browsers"}
+                    # bit 2 (4) - set if all simulated clients achieve FS. In other words, this requires an ECDHE + DHE combination to be supported.
+					4 { $forwardSecrecy = "Yes (with most browsers) ROBUST"}
+                    default { $forwardSecrecy = "Unknown" }
+				}
+                Write-Host "Forward Secrecy                 :" $forwardSecrecy
+                Write-Host "Supports RC4                    :" $EndpointAnalysis.Details.supportsRc4
+                Write-Host "Beast Vulnerable                :" $EndpointAnalysis.Details.vulnBeast
+                Write-Host "Heartbleed Vulnerable           :" $EndpointAnalysis.Details.heartbleed
 
 				switch ($EndpointAnalysis.Details.renegSupport)
 				{
 					# bit 0 (1) - set if insecure client-initiated renegotiation is supported
-					0 { $Renegotiation = "Insecure client-initiated supported"}
+					1 { $Renegotiation = "Insecure Client-Initiated"}
 					# bit 1 (2) - set if secure renegotiation is supported
-					1 { $Renegotiation = "secure renegotiation supported"}
+					2 { $Renegotiation = "Secure Renegotiation SUPPORTED"}
 					# bit 2 (4) - set if secure client-initiated renegotiation is supported
-					2 { $Renegotiation = "client-initiated renegotiation supported"}
+					4 { $Renegotiation = "Secure Client-Initiated"}
 					# bit 3 (8) - set if the server requires secure renegotiation support
-					3 { $Renegotiation = "requires secure renegotiation"}
+					8 { $Renegotiation = "Secure Renegotiation REQUIRED"}
+                    default { $Renegotiation = "Unknown" }
 				}
-				Write-Host "Renegotiation Support : " $Renegotiation
+				Write-Host "Renegotiation Support           :" $Renegotiation
 
 				switch ($EndpointAnalysis.Details.sessionResumption)
 				{
 					# 0 - session resumption is not enabled and we're seeing empty session IDs
-					0 { $sessionResumption = "session resumption not enabled"}
+					0 { $sessionResumption = "Not enabled"}
 					# 1 - endpoint returns session IDs, but sessions are not resumed
 					1 { $sessionResumption = "endpoint returns session IDs, but sessions not resumed"}
 					# 2 - session resumption is enabled
-					2 { $sessionResumption = "session resumption enabled"}
+					2 { $sessionResumption = "Enabled"}
+                    default { $sessionResumption = "Unknown" }
 				}
-				Write-Host "Renegotiation Support : " $sessionResumption
+				Write-Host "Session Resumption (Cached)     :" $sessionResumption
 
+				switch ($EndpointAnalysis.Details.sessionTickets)
+				{
+                    # bit 0 (1) - set if session tickets are supported
+					1 { $sessionTickets = "Supported"}
+                    # bit 1 (2) - set if the implementation is faulty [not implemented]
+					2 { $sessionTickets = "Implemenation faulty"}
+                    # bit 2 (4) - set if the server is intolerant to the extension
+					4 { $sessionTickets = "Intolerant"}
+                    default { $sessionTickets = "No" }
+				}
+				Write-Host "Session Resumption (Tickets)    :" $sessionTickets
 
-<#
+				switch ($EndpointAnalysis.Details.openSslCcs)
+				{
+                    # -1 - test failed
+					-1 { $openSslCcs = "Test failed"}
+                    # 0 - unknown
+					0 { $openSslCcs = "Unknown"}
+                    # 1 - not vulnerable
+					1 { $openSslCcs = "Not vulnerable"}
+                    # 2 - possibly vulnerable, but not exploitable
+					2 { $openSslCcs = "Possibly vulnerable, but not exploitable"}
+                    # 3 - vulnerable and exploitable
+					3 { $openSslCcs = "Vulnerable and exploitable"}
 
-key #Expand
-cert #Expand
-chain #Expand
-protocols 
-suites #Expand
-sessionResumption
-# 0 - session resumption is not enabled and we're seeing empty session IDs
-# 1 - endpoint returns session IDs, but sessions are not resumed
-# 2 - session resumption is enabled
-compressionMethods
-# bit 0 is set for DEFLATE
-supportsNpn
-sessionTickets
-# bit 0 (1) - set if session tickets are supported
-# bit 1 (2) - set if the implementation is faulty [not implemented]
-# bit 2 (4) - set if the server is intolerant to the extension
-ocspStapling
-sniRequired
-heartbeat
-openSslCcs
-# -1 - test failed
-# 0 - unknown
-# 1 - not vulnerable
-# 2 - possibly vulnerable, but not exploitable
-# 3 - vulnerable and exploitable
-poodleTls
-# -1 - test failed
-# 0 - unknown
-# 1 - not vulnerable
-# 2 - vulnerable
+                    default { $openSslCcs = "Unknown" }
+				}
+				Write-Host "OpenSSL CCS vuln (CVE-2014-0224):" $openSslCcs
 
-forwardSecrecy - indicates support for Forward Secrecy
-# bit 0 (1) - set if at least one browser from our simulations negotiated a Forward Secrecy suite.
-# bit 1 (2) - set based on Simulator results if FS is achieved with modern clients. For example, the server supports ECDHE suites, but not DHE.
-# bit 2 (4) - set if all simulated clients achieve FS. In other words, this requires an ECDHE + DHE combination to be supported.
+				switch ($EndpointAnalysis.Details.compressionMethods)
+				{
+                    # bit 0 is set for DEFLATE
+					0 { $compressionMethods = "DEFLATE"}
 
-#>            
-				$EndpointAnalysis.Details | Out-String | Write-Verbose
+                    default { $compressionMethods = "No" }
+				}
+				Write-Host "TLS Compression                 :" $compressionMethods
+
+				switch ($EndpointAnalysis.Details.poodleTls)
+				{
+                    # -1 - test failed
+					-1 { $poodleTls = "Test failed"}
+                    # 0 - unknown
+					0 { $poodleTls = "Unknown"}
+                    # 1 - not vulnerable
+					1 { $poodleTls = "Not vulnerable"}
+                    # 2 - vulnerable
+					2 { $poodleTls = "Vulnerable"}
+
+                    default { $poodleTls = "Unknown" }
+				}
+				Write-Host "POODLE (TLS)                    :" $poodleTls
+#Missing from .Net class
+#				Write-Host "POODLE                          :" $EndpointAnalysis.Details.poodle
+				Write-Host "Heartbeat (extension)           :" $EndpointAnalysis.Details.heartbeat
+				Write-Host "Next Protocol Negotiation (NPN) :" $EndpointAnalysis.Details.supportsNpn
+				Write-Host "OCSP stapling                   :" $EndpointAnalysis.Details.ocspStapling
+
+                Write-Host "Protocols                       :" 
+                $EndpointAnalysis.Details.protocols | Format-Table -Property name,version -AutoSize
+               
+
+                $EndpointAnalysis.Details.suites.list | Format-Table -Property name, cipherStrength, ecdhBits, ecdhStrength, dhStrength, dhP, dhG, dhYs -AutoSize
+
+                Write-Host "Signing key      :" $EndpointAnalysis.Details.key.alg $EndpointAnalysis.Details.key.strength
+                $EndpointAnalysis.Details.cert | Format-List
+           
             }
-            Write-Host "`n"
+
         }
         Write-Host "`r`n"
     }
