@@ -1,4 +1,4 @@
-﻿######################################################################################
+######################################################################################
 # Written by Ashley Poole  -  http://www.ashleypoole.co.uk                           #
 #                                                                                    #
 # Checks servers SSL implementation for the given host(s).                           #
@@ -100,7 +100,14 @@ Foreach ($myHost In $Hosts)
 
     # Analysising host with a maximum of a 5 minute wait time
     #$HostAnalysis = $SSLService.AutomaticAnalyze($myHost, 500, 10)
-
+    
+    if ($myHost -notlike 'https://.*')
+    {
+      Write-host "Adding HTTPS:// because the .Net library expects it"
+      
+      $myHost = "https://" + $myHost
+    }
+    
     Write-Host "**********************************************************************************"
     Write-Host $myHost " - " (Get-Date -format "dd-MM-yyyy HH:mm:ss")
     Write-Host "**********************************************************************************"
@@ -141,8 +148,72 @@ Foreach ($myHost In $Hosts)
                 Write-Host "Supports RC4          :" $EndpointAnalysis.Details.supportsRc4
                 Write-Host "Beast Vulnerable      :" $EndpointAnalysis.Details.vulnBeast
                 Write-Host "Heartbleed Vulnerable :" $EndpointAnalysis.Details.heartbleed
-                Write-Host "Poodle Vulnerable     :" $EndpointAnalysis.Details.poodleTls
-            
+
+				switch ($EndpointAnalysis.Details.renegSupport)
+				{
+					# bit 0 (1) - set if insecure client-initiated renegotiation is supported
+					0 { $Renegotiation = "Insecure client-initiated supported"}
+					# bit 1 (2) - set if secure renegotiation is supported
+					1 { $Renegotiation = "secure renegotiation supported"}
+					# bit 2 (4) - set if secure client-initiated renegotiation is supported
+					2 { $Renegotiation = "client-initiated renegotiation supported"}
+					# bit 3 (8) - set if the server requires secure renegotiation support
+					3 { $Renegotiation = "requires secure renegotiation"}
+				}
+				Write-Host "Renegotiation Support : " $Renegotiation
+
+				switch ($EndpointAnalysis.Details.sessionResumption)
+				{
+					# 0 - session resumption is not enabled and we're seeing empty session IDs
+					0 { $sessionResumption = "session resumption not enabled"}
+					# 1 - endpoint returns session IDs, but sessions are not resumed
+					1 { $sessionResumption = "endpoint returns session IDs, but sessions not resumed"}
+					# 2 - session resumption is enabled
+					2 { $sessionResumption = "session resumption enabled"}
+				}
+				Write-Host "Renegotiation Support : " $sessionResumption
+
+
+<#
+
+key #Expand
+cert #Expand
+chain #Expand
+protocols 
+suites #Expand
+sessionResumption
+# 0 - session resumption is not enabled and we're seeing empty session IDs
+# 1 - endpoint returns session IDs, but sessions are not resumed
+# 2 - session resumption is enabled
+compressionMethods
+# bit 0 is set for DEFLATE
+supportsNpn
+sessionTickets
+# bit 0 (1) - set if session tickets are supported
+# bit 1 (2) - set if the implementation is faulty [not implemented]
+# bit 2 (4) - set if the server is intolerant to the extension
+ocspStapling
+sniRequired
+heartbeat
+openSslCcs
+# -1 - test failed
+# 0 - unknown
+# 1 - not vulnerable
+# 2 - possibly vulnerable, but not exploitable
+# 3 - vulnerable and exploitable
+poodleTls
+# -1 - test failed
+# 0 - unknown
+# 1 - not vulnerable
+# 2 - vulnerable
+
+forwardSecrecy - indicates support for Forward Secrecy
+# bit 0 (1) - set if at least one browser from our simulations negotiated a Forward Secrecy suite.
+# bit 1 (2) - set based on Simulator results if FS is achieved with modern clients. For example, the server supports ECDHE suites, but not DHE.
+# bit 2 (4) - set if all simulated clients achieve FS. In other words, this requires an ECDHE + DHE combination to be supported.
+
+#>            
+				$EndpointAnalysis.Details | Out-String | Write-Verbose
             }
             Write-Host "`n"
         }
